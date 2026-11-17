@@ -7,6 +7,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Every user has a balance, which starts at 0.00 € and holds the amount of money that the group owes the user.
+  `POST /api/users/{userId}/expenses` records an expense and adds its amount to the balance, and
+  `GET /api/users/{userId}/balance` reads the balance. The domain rejects an amount of 0.00 € or less and an amount
+  with more than two decimal places.
+
 ### Changed
 
 - The README describes how the group buys coffee beans from the kitty and how a user who buys coffee with their own

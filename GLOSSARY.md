@@ -29,6 +29,15 @@ with a line "Avoid:", which lists words not to use for the concept.
 - **consumption**: The stored record that holds the coffee count of one user. Every user has exactly one such record,
   which `UserService.create` creates together with the user.
   API: `/api/users/{userId}/consumption`, `ConsumptionDto`. Code: `CoffeeConsumption`, `coffee_consumptions`.
+- **balance**: The amount of money that the group owes a user, which starts at 0.00 € when the app creates the user.
+  Recording an expense raises the balance by the amount of the expense.
+  API: `/api/users/{userId}/balance`, `BalanceDto.balance`, `{ "amount": 15.00 }`. Code: `Balance`,
+  `BalanceService`, `balances.balance`.
+  Avoid: credit (for the balance), account.
+- **expense**: A purchase that a user paid for with their own money and that the group owes back to the user. An
+  expense must be greater than 0.00 € and have at most two decimal places.
+  API: `POST /api/users/{userId}/expenses`, `ExpenseDto.amount`. Code: `BalanceService.recordExpense`,
+  `BalanceServiceImpl.recordExpense`.
 - **delta**: The field in the request body of `POST /api/users/{userId}/consumption` that states the change to the
   coffee count. The domain accepts only +1, which adds one coffee, and rejects every other integer. An extension can
   accept -1 to remove a coffee without changing the format of the request body (see the KDoc of
@@ -36,8 +45,8 @@ with a line "Avoid:", which lists words not to use for the concept.
   API: `ConsumptionDeltaDto.delta`, `{ "delta": 1 }`. Code: `CoffeeConsumptionService.applyDelta`.
   Avoid: single-step change.
 - **fixture user**: One of the five users in `TestFixtures`, such as `jane_doe`. In the dev profile, the fixture loader
-  creates these users with a coffee count of zero on every start, and the system and acceptance tests create them the
-  same way before each test.
+  creates these users with a coffee count of zero and a balance of 0.00 € on every start, and the system and acceptance
+  tests create them the same way before each test.
   Code: `TestFixtures`, `FixtureStartupLoader`, `campus-coffee.fixtures.*`.
   Avoid: seeded user.
 
@@ -60,8 +69,9 @@ with a line "Avoid:", which lists words not to use for the concept.
   data port with Jakarta Persistence (JPA). The accepted ADR 001 applies the term to whole modules as well and calls
   the `api` module the REST adapter and the `data` module the JPA adapter.
   Code: `UserController`, `UserDataServiceImpl`.
-- **entity**: A kind of domain object that the app stores in a table of its own, such as users and consumptions. Each
-  kind needs several parts, such as a domain model, a data port, a JPA entity, an entity mapper, and a migration
+- **entity**: A kind of domain object that the app stores in a table of its own, such as users, consumptions, and
+  balances. Each kind needs several parts, such as a domain model, a data port, a JPA entity, an entity mapper, and a
+  migration
   (CLAUDE.md, Adding a New Entity).
 - **domain model**: A class in `domain/.../model/` that represents a concept of the business logic, such as a user, and
   has no annotations or code for the web or the database. An instance of such a class is a domain object.
@@ -86,7 +96,8 @@ with a line "Avoid:", which lists words not to use for the concept.
   file that it has not applied to the database before, in version order. A migration that others have applied, such as
   a pushed migration, must not change (CLAUDE.md, Database).
   Code: `V1__create_users_table.sql`, `V2__create_coffee_consumptions_table.sql`.
-- **data reset**: The deletion of all consumptions and then all users through the internal port `DataResetService`.
+- **data reset**: The deletion of all balances, all consumptions, and then all users through the internal port
+  `DataResetService`.
   The fixture loader runs this deletion when `reset-on-startup` is true, and the data integration, system, and
   acceptance tests run it before each test. A client cannot delete the data through the API.
   Code: `DataResetService.clearAll`.
@@ -109,6 +120,6 @@ with a line "Avoid:", which lists words not to use for the concept.
   classes to a status and uses the class name as the error code. `NotFoundException` (404) means that a lookup found no
   stored object, for example no user with the id in the path. `DuplicationException` (409) means that a request repeats
   a value that must be unique, such as the login name or the email address of another user. `ValidationException` (400)
-  means that a request breaks a rule of the domain or of a controller, such as an integer delta other than +1 or an id
-  in the body of `POST /api/users`. A request body that fails Bean Validation or cannot be read, such as a body with a
+  means that a request breaks a rule of the domain or of a controller, such as an integer delta other than +1, an
+  expense amount that is not greater than 0.00 €, or an id in the body of `POST /api/users`. A request body that fails Bean Validation or cannot be read, such as a body with a
   delta of 1.9, gets a 400 with the error code `BadRequest` instead.

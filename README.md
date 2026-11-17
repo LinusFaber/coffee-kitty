@@ -7,16 +7,18 @@
 
 Coffee Kitty counts the coffees that the users in a group drink from a shared coffee machine. The group buys new coffee
 beans from a shared cash box, the kitty. A user can also buy coffee with their own money and declare the purchase as an
-expense. So far, the app is a minimal REST API that stores users and their coffee counts, which grow by one coffee at a
-time. Prices, payments, expenses, a user interface, and authentication are still missing.
+expense. So far, the app is a minimal REST API that stores users, their coffee counts, which grow by one coffee at a
+time, and their balances, which grow by the amount of each recorded expense. Prices, payments, a user interface, and
+authentication are still missing.
 
 Coffee Kitty is the running example of a software engineering course at Heidelberg University. Students first see the
 app in the lectures on agentic software engineering and extend it over the semester, for example with a price per cup
 and a balance for each user. Coffee Kitty has the same architecture as the coffee app of [SE@UHD](https://se-uhd.de/),
 the Software Engineering Group at Heidelberg University. Both apps have four backend modules, ports and adapters, and
-layer rules that ArchUnit enforces, but Coffee Kitty has only two entities: users and their consumptions.
+layer rules that ArchUnit enforces, but Coffee Kitty has only three entities: users, their consumptions, and their
+balances.
 
-## Users and coffee counts
+## Users, coffee counts, and balances
 
 - A user has a login name, an email address, and a first and a last name. A login name consists of ASCII letters,
   digits, and underscores. Login names and email addresses are unique. The app stores every email address trimmed and
@@ -24,6 +26,9 @@ layer rules that ArchUnit enforces, but Coffee Kitty has only two entities: user
 - Every user has one consumption, which holds the user's coffee count. When the app creates a user, it also creates
   the consumption with a coffee count of zero. Adding a coffee raises the coffee count by one, and no endpoint lowers
   it. When two requests add a coffee for the same user at the same time, both coffees count.
+- Every user has one balance, which holds the amount of money that the group owes the user. The app creates the balance
+  with 0.00 € when it creates the user. Recording an expense over an amount greater than 0.00 € adds the amount to the
+  balance. The app rejects an amount of 0.00 € or less and an amount with more than two decimal places.
 - The REST API accepts and returns only JSON. Any client can call every endpoint, because Coffee Kitty has no
   authentication.
 - A Spring Boot backend in Kotlin stores the users and their coffee counts in PostgreSQL through Jakarta Persistence
@@ -156,7 +161,7 @@ curl http://localhost:8081/api/users
 ```
 
 `POST /users` with `{ "loginName", "emailAddress", "firstName", "lastName" }` creates a user with a coffee count of
-zero and returns 201 Created with the new user and a `Location` header. The endpoint returns 400 Bad Request for a
+zero and a balance of 0.00 € and returns 201 Created with the new user and a `Location` header. The endpoint returns 400 Bad Request for a
 missing or malformed field or an `id` in the body, and 409 Conflict when the login name or the email address is taken:
 
 ```shell
@@ -194,7 +199,27 @@ curl --request POST --header "Content-Type: application/json" --data '{"delta":1
   http://localhost:8081/api/users/$USER_ID/consumption
 ```
 
-Both consumption endpoints return 404 Not Found for an unknown user. An error response has a JSON body with the fields
+`GET /users/{userId}/balance` returns the balance of the user as `{ "loginName", "balance" }`:
+
+```shell
+USER_ID=$(curl -s http://localhost:8081/api/users |
+  python3 -c 'import json, sys; print(next(u["id"] for u in json.load(sys.stdin) if u["loginName"] == "jane_doe"))')
+curl http://localhost:8081/api/users/$USER_ID/balance
+```
+
+`POST /users/{userId}/expenses` with `{ "amount": 15.00 }` adds the amount to the balance and returns the new balance as
+`{ "loginName", "balance" }`. The endpoint also accepts an amount with one or no decimal places, such as `15.5` or
+`15`. It returns 400 Bad Request for an amount of 0.00 € or less and for an amount with more than two decimal places:
+
+```shell
+USER_ID=$(curl -s http://localhost:8081/api/users |
+  python3 -c 'import json, sys; print(next(u["id"] for u in json.load(sys.stdin) if u["loginName"] == "jane_doe"))')
+curl --request POST --header "Content-Type: application/json" --data '{"amount":15.00}' \
+  http://localhost:8081/api/users/$USER_ID/expenses
+```
+
+Both consumption endpoints and both balance endpoints return 404 Not Found for an unknown user. An error response has a
+JSON body with the fields
 `errorCode`, `message`, `statusCode`, `statusMessage`, `timestamp`, and `path`. For a domain exception, `errorCode` is
 the class name of the exception: `NotFoundException`, `DuplicationException`, or `ValidationException`. For any other
 error, `errorCode` is the reason phrase of the status without spaces, such as `BadRequest`. Every timestamp in a

@@ -5,8 +5,9 @@
 Coffee Kitty is a minimal coffee counter with the architecture of the coffee app of SE@UHD, the Software Engineering
 Group at Heidelberg University. The package prefix `de.seuhd` stands for the group. Coffee Kitty is the running example
 of a software engineering lecture, and students extend it over the semester. A user has a login name, an email address,
-and a first and a last name. Each user has exactly one consumption, which holds a coffee count that starts at zero. The
-REST API lists, creates, and reads users, reads a coffee count, and adds one coffee at a time. Every endpoint is open,
+and a first and a last name. Each user has exactly one consumption, which holds a coffee count that starts at zero, and
+one balance, which holds the amount of money that the group owes the user. The REST API lists, creates, and reads users,
+reads a coffee count, adds one coffee at a time, reads a balance, and records an expense. Every endpoint is open,
 because the app has no authentication. The app has no frontend. In the dev profile, Swagger UI documents the API.
 `GLOSSARY.md` defines one term for each concept. Use these terms in code, messages, and documentation.
 
@@ -62,12 +63,15 @@ The ports are in `domain/src/main/kotlin/de/seuhd/campuscoffee/domain/ports/`:
 
 The implementations of the API and internal ports are in `domain/.../implementation/`. `UserServiceImpl.create` trims
 the email address, converts it to lowercase, and checks the new user against the limits in the companion object of
-`User`. In one transaction, the method then stores the user and the consumption of the user with a coffee count of
-zero. The fixture loader and the test setup create the fixture users through `UserService.create`, which checks the
-fixture users like any other new user. `CoffeeConsumptionServiceImpl.applyDelta` accepts only a delta of `+1` and reads
-the consumption with `getByUserIdForUpdate`, which locks the row until the transaction ends. A second request that adds
-a coffee for the same user at the same time waits until the first transaction ends. The second request then reads the
-raised count, and both coffees count.
+`User`. In one transaction, the method then stores the user, the consumption of the user with a coffee count of zero,
+and the balance of the user at 0.00 €. The fixture loader and the test setup create the fixture users through
+`UserService.create`, which checks the fixture users like any other new user.
+`CoffeeConsumptionServiceImpl.applyDelta` accepts only a delta of `+1` and reads the consumption with
+`getByUserIdForUpdate`, which locks the row until the transaction ends. A second request that adds a coffee for the
+same user at the same time waits until the first transaction ends. The second request then reads the raised count, and
+both coffees count. `BalanceServiceImpl.recordExpense` works the same way: it locks the balance row, adds an amount
+greater than 0.00 € with at most two decimal places, and stores the raised balance. Without the lock, two concurrent
+expenses could both read the same balance and one expense would be lost.
 
 ### Generic Base Classes
 
@@ -210,18 +214,21 @@ constraints, such as a null in a NOT NULL column, passes the startup check and f
 
 ## Testing Strategy
 
-- Unit tests: the domain service tests in `domain/src/test/kotlin/`, such as `UserServiceTest`, and
-  `FixtureStartupLoaderTest` in `application/src/test/kotlin/`. They use Mockito mocks.
-- Integration tests: `CrudDataServiceIntegrationTest` and `ConstraintMappingRegistryIntegrationTest` in
-  `data/src/test/kotlin/`. They extend `AbstractDataIntegrationTest`, which runs each test in the Spring context of
-  `DataTestApplication` against PostgreSQL in Testcontainers. `ConstraintMappingRegistryIntegrationTest` fails unless
-  `ConstraintMapping.REGISTRY` lists exactly the unique constraints and unique indexes of the schema.
+- Unit tests: the domain service tests in `domain/src/test/kotlin/`, such as `UserServiceTest` and
+  `BalanceServiceTest`, and `FixtureStartupLoaderTest` in `application/src/test/kotlin/`. They use Mockito mocks.
+- Integration tests: `CrudDataServiceIntegrationTest`, `BalanceDataServiceIntegrationTest`, and
+  `ConstraintMappingRegistryIntegrationTest` in `data/src/test/kotlin/`. They extend `AbstractDataIntegrationTest`,
+  which runs each test in the Spring context of `DataTestApplication` against PostgreSQL in Testcontainers.
+  `ConstraintMappingRegistryIntegrationTest` fails unless `ConstraintMapping.REGISTRY` lists exactly the unique
+  constraints and unique indexes of the schema.
 - System tests: the classes in `application/src/test/kotlin/de/seuhd/campuscoffee/tests/system/`, such as
-  `UserSystemTests`. They extend `AbstractSystemTest` and send requests with Spring's `RestTestClient`.
-  `SystemTestUtils` holds the PostgreSQL container from Testcontainers that the system and acceptance tests share.
+  `UserSystemTests` and `BalanceSystemTests`. They extend `AbstractSystemTest` and send requests with Spring's
+  `RestTestClient`. `SystemTestUtils` holds the PostgreSQL container from Testcontainers that the system and
+  acceptance tests share.
 - Acceptance tests: Cucumber scenarios for behavior-driven development (BDD). The step definitions and the Cucumber
   configuration are in `application/src/test/kotlin/de/seuhd/campuscoffee/tests/acceptance/`, and the feature files,
-  such as `consumption.feature`, are in `application/src/test/resources/de/seuhd/campuscoffee/tests/acceptance/`.
+  such as `consumption.feature` and `balance.feature`, are in
+  `application/src/test/resources/de/seuhd/campuscoffee/tests/acceptance/`.
 - Architecture tests: `ArchitectureTests` (see Layer Rules).
 
 ### Test Naming
