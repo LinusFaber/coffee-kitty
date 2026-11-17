@@ -19,7 +19,7 @@ import org.springframework.context.annotation.Configuration
             title = "Coffee Kitty API",
             description =
                 "REST API of a coffee counter. It lists, reads, and creates users, reads a user's coffee count, " +
-                    "and adds a coffee to it."
+                    "adds a coffee to it, reads a user's balance, and records an expense for a user."
         )
 )
 class OpenApiConfig {

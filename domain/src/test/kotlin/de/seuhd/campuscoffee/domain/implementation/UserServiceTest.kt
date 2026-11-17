@@ -2,8 +2,10 @@ package de.seuhd.campuscoffee.domain.implementation
 
 import de.seuhd.campuscoffee.domain.exceptions.NotFoundException
 import de.seuhd.campuscoffee.domain.exceptions.ValidationException
+import de.seuhd.campuscoffee.domain.model.Balance
 import de.seuhd.campuscoffee.domain.model.CoffeeConsumption
 import de.seuhd.campuscoffee.domain.model.User
+import de.seuhd.campuscoffee.domain.ports.data.BalanceDataService
 import de.seuhd.campuscoffee.domain.ports.data.CoffeeConsumptionDataService
 import de.seuhd.campuscoffee.domain.ports.data.UserDataService
 import org.assertj.core.api.Assertions.assertThat
@@ -24,12 +26,14 @@ import java.util.UUID
 import kotlin.reflect.jvm.javaMethod
 
 /**
- * Unit tests for [UserServiceImpl] with Mockito mocks of [UserDataService] and [CoffeeConsumptionDataService].
+ * Unit tests for [UserServiceImpl] with Mockito mocks of [UserDataService], [CoffeeConsumptionDataService], and
+ * [BalanceDataService].
  */
 class UserServiceTest {
     private val userDataService: UserDataService = mock()
     private val coffeeConsumptionDataService: CoffeeConsumptionDataService = mock()
-    private val service = UserServiceImpl(userDataService, coffeeConsumptionDataService)
+    private val balanceDataService: BalanceDataService = mock()
+    private val service = UserServiceImpl(userDataService, coffeeConsumptionDataService, balanceDataService)
 
     private val userId: UUID = UUID(0L, 1L)
     private val createdId: UUID = UUID(0L, 2L)
@@ -50,18 +54,20 @@ class UserServiceTest {
     ) = User(loginName = loginName, emailAddress = emailAddress, firstName = "Fresh", lastName = "User")
 
     /**
-     * Stubs `upsert` on both mocks to return its argument. The mock of [UserDataService] returns the user with the id
+     * Stubs `upsert` on the mocks to return its argument. The mock of [UserDataService] returns the user with the id
      * [createdId].
      */
     private fun stubUpserts() {
         whenever(userDataService.upsert(any())).thenAnswer { (it.arguments[0] as User).copy(id = createdId) }
         whenever(coffeeConsumptionDataService.upsert(any())).thenAnswer { it.arguments[0] as CoffeeConsumption }
+        whenever(balanceDataService.upsert(any())).thenAnswer { it.arguments[0] as Balance }
     }
 
-    /** Asserts that neither data port stored anything. */
+    /** Asserts that no data port stored anything. */
     private fun verifyNothingStored() {
         verify(userDataService, never()).upsert(any())
         verify(coffeeConsumptionDataService, never()).upsert(any())
+        verify(balanceDataService, never()).upsert(any())
     }
 
     @Test
@@ -86,7 +92,7 @@ class UserServiceTest {
     }
 
     @Test
-    fun `create stores the normalized user without client id and timestamps and then a consumption with count 0`() {
+    fun `create stores the user, a consumption with count 0, and a balance of zero euro`() {
         stubUpserts()
         val clientTime = LocalDateTime.of(2000, 1, 1, 0, 0)
 
@@ -98,9 +104,10 @@ class UserServiceTest {
 
         assertThat(created.id).isEqualTo(createdId)
         assertThat(created.emailAddress).isEqualTo("fresh@se.de")
-        inOrder(userDataService, coffeeConsumptionDataService) {
+        inOrder(userDataService, coffeeConsumptionDataService, balanceDataService) {
             verify(userDataService).upsert(newUser(emailAddress = "fresh@se.de"))
             verify(coffeeConsumptionDataService).upsert(CoffeeConsumption(user = created, count = 0))
+            verify(balanceDataService).upsert(Balance(user = created, balance = Balance.ZERO_BALANCE))
         }
     }
 
@@ -108,8 +115,8 @@ class UserServiceTest {
     fun `create is transactional with REQUIRED propagation`() {
         val create = requireNotNull(UserServiceImpl::create.javaMethod)
 
-        // with REQUIRED, create always runs in a transaction, and if storing the consumption fails, the rollback
-        // also removes the new user
+        // with REQUIRED, create always runs in a transaction, and if storing the consumption or the balance fails,
+        // the rollback also removes the new user
         assertThat(create.getAnnotation(Transactional::class.java)?.propagation).isEqualTo(Propagation.REQUIRED)
     }
 

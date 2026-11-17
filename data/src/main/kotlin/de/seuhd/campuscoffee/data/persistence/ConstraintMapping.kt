@@ -1,8 +1,10 @@
 package de.seuhd.campuscoffee.data.persistence
 
+import de.seuhd.campuscoffee.data.persistence.entities.BalanceEntity
 import de.seuhd.campuscoffee.data.persistence.entities.CoffeeConsumptionEntity
 import de.seuhd.campuscoffee.data.persistence.entities.UserEntity
 import de.seuhd.campuscoffee.domain.exceptions.DuplicationException
+import de.seuhd.campuscoffee.domain.model.Balance
 import de.seuhd.campuscoffee.domain.model.CoffeeConsumption
 import de.seuhd.campuscoffee.domain.model.DomainModel
 import de.seuhd.campuscoffee.domain.model.User
@@ -50,6 +52,11 @@ class ConstraintMapping<D : DomainModel<*>>(
                 ConstraintMapping(
                     CoffeeConsumptionEntity.USER_UNIQUE_CONSTRAINT,
                     CoffeeConsumption::class.java,
+                    "user ID"
+                ) { it.user.id.toString() },
+                ConstraintMapping(
+                    BalanceEntity.USER_UNIQUE_CONSTRAINT,
+                    Balance::class.java,
                     "user ID"
                 ) { it.user.id.toString() }
             )

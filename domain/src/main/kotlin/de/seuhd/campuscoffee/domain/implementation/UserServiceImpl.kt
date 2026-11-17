@@ -1,9 +1,11 @@
 package de.seuhd.campuscoffee.domain.implementation
 
 import de.seuhd.campuscoffee.domain.exceptions.ValidationException
+import de.seuhd.campuscoffee.domain.model.Balance
 import de.seuhd.campuscoffee.domain.model.CoffeeConsumption
 import de.seuhd.campuscoffee.domain.model.User
 import de.seuhd.campuscoffee.domain.ports.api.UserService
+import de.seuhd.campuscoffee.domain.ports.data.BalanceDataService
 import de.seuhd.campuscoffee.domain.ports.data.CoffeeConsumptionDataService
 import de.seuhd.campuscoffee.domain.ports.data.UserDataService
 import org.springframework.stereotype.Service
@@ -12,13 +14,14 @@ import java.util.UUID
 
 /**
  * Domain implementation of [UserService]. [create] checks every new user, including the fixture users, which do not
- * pass through a DTO or Bean Validation. [create] stores the user and the user's consumption in one transaction. If
- * storing the consumption fails, the rollback removes the user too.
+ * pass through a DTO or Bean Validation. [create] stores the user, the user's consumption, and the user's balance in
+ * one transaction. If storing the consumption or the balance fails, the rollback removes the user too.
  */
 @Service
 class UserServiceImpl(
     private val userDataService: UserDataService,
-    private val coffeeConsumptionDataService: CoffeeConsumptionDataService
+    private val coffeeConsumptionDataService: CoffeeConsumptionDataService,
+    private val balanceDataService: BalanceDataService
 ) : UserService {
     override fun getAll(): List<User> = userDataService.getAll()
 
@@ -39,8 +42,10 @@ class UserServiceImpl(
             userDataService.upsert(
                 user.copy(id = null, createdAt = null, updatedAt = null, emailAddress = emailAddress)
             )
-        // create the consumption after the user, because coffee_consumptions.user_id must reference a stored user
+        // create the consumption and the balance after the user, because their user_id columns must reference a
+        // stored user
         coffeeConsumptionDataService.upsert(CoffeeConsumption(user = created, count = 0))
+        balanceDataService.upsert(Balance(user = created, balance = Balance.ZERO_BALANCE))
         return created
     }
 
