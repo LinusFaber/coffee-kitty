@@ -7,8 +7,8 @@ with a line "Avoid:", which lists words not to use for the concept.
 
 ## Domain
 
-- **user**: A person whose coffees the app counts. The app stores the login name, the email address, and the first and
-  last name of the person.
+- **user**: A person whose coffees the app counts. The app stores the login name, the email address, the first and the
+  last name, and the role of the person.
   API: `/api/users`, `UserDto`, `userId`. Code: `User`, `UserService`, `users`.
   Avoid: member, drinker, account.
 - **login name**: A user's unique name, which consists of ASCII letters, digits, and underscores and has at most 255
@@ -23,12 +23,14 @@ with a line "Avoid:", which lists words not to use for the concept.
 - **coffee**: One cup that a user drinks. Adding a cup raises the user's coffee count by one.
   API: `POST /api/users/{userId}/consumption` with `delta` 1. Code: `CoffeeConsumptionService.applyDelta`.
   Avoid: bump (a count).
-- **coffee count**: A user's total number of coffees. The number starts at zero when the user is created and never
-  decreases.
+- **coffee count**: A user's total number of coffees. The number starts at zero when the user is created. Adding a
+  coffee raises it by one, and an undo lowers it by one.
   API: `ConsumptionDto.count`. Code: `CoffeeConsumption.count`, `coffee_consumptions.count`.
-- **consumption**: The stored record that holds the coffee count of one user. Every user has exactly one such record,
-  which `UserService.create` creates together with the user.
-  API: `/api/users/{userId}/consumption`, `ConsumptionDto`. Code: `CoffeeConsumption`, `coffee_consumptions`.
+- **consumption**: The stored record that holds the coffee count of one user and the time of each recent coffee that the
+  user did not undo. Adding a coffee drops the times whose grace period has passed. Every user has exactly one such
+  record, which `UserService.create` or `UserInternalService.create` creates together with the user.
+  API: `/api/users/{userId}/consumption`, `ConsumptionDto`. Code: `CoffeeConsumption`, `coffee_consumptions`,
+  `coffeeTimes`, `coffee_times`.
 - **balance**: The amount of money that the group owes a user, which starts at 0.00 € when the app creates the user.
   Recording an expense raises the balance by the amount of the expense.
   API: `/api/users/{userId}/balance`, `BalanceDto.balance`, `{ "amount": 15.00 }`. Code: `Balance`,
@@ -44,9 +46,9 @@ with a line "Avoid:", which lists words not to use for the concept.
   `CoffeeConsumptionService.applyDelta`).
   API: `ConsumptionDeltaDto.delta`, `{ "delta": 1 }`. Code: `CoffeeConsumptionService.applyDelta`.
   Avoid: single-step change.
-- **fixture user**: One of the five users in `TestFixtures`, such as `jane_doe`. In the dev profile, the fixture loader
-  creates these users with a coffee count of zero and a balance of 0.00 € on every start, and the system and acceptance
-  tests create them the same way before each test.
+- **fixture user**: One of the five users in `TestFixtures`, such as `jane_doe`, the only admin among them. In the dev
+  profile, the fixture loader creates these users with a coffee count of zero and a balance of 0.00 € on every start,
+  and the system and acceptance tests create them the same way before each test.
   Code: `TestFixtures`, `FixtureStartupLoader`, `campus-coffee.fixtures.*`.
   Avoid: seeded user.
 
@@ -101,10 +103,10 @@ with a line "Avoid:", which lists words not to use for the concept.
   The fixture loader runs this deletion when `reset-on-startup` is true, and the data integration, system, and
   acceptance tests run it before each test. A client cannot delete the data through the API.
   Code: `DataResetService.clearAll`.
-- **fixture loader**: The Spring component that creates the fixture users through `UserService.create` at startup when
-  `campus-coffee.fixtures.load-on-startup` is true. With `campus-coffee.fixtures.reset-on-startup` set to true, as in
-  the dev profile, the component runs a data reset first. Without that setting, the component creates the fixture users
-  only when the database has no users.
+- **fixture loader**: The Spring component that creates the fixture users through `UserInternalService.create` at
+  startup when `campus-coffee.fixtures.load-on-startup` is true. With `campus-coffee.fixtures.reset-on-startup` set to
+  true, as in the dev profile, the component runs a data reset first. Without that setting, the component creates the
+  fixture users only when the database has no users.
   Code: `FixtureStartupLoader`, `FixturesProperties`.
   Avoid: startup loader.
 - **dev profile**: The Spring profile `dev` for running the app locally. In this profile, the app serves the API and
@@ -115,11 +117,18 @@ with a line "Avoid:", which lists words not to use for the concept.
   `statusCode`, `statusMessage`, `timestamp` (in UTC), and `path`. For a domain exception, `errorCode` is the class name
   of the exception. For any other error, `errorCode` is the reason phrase of the status without spaces, such as
   `BadRequest`.
-  Code: `ErrorResponse`, `GlobalExceptionHandler`.
+  Code: `ErrorResponse`, `GlobalExceptionHandler`, `writeErrorResponse`.
 - **domain exception**: An exception class in `domain/.../exceptions/`. `GlobalExceptionHandler` maps each of these
   classes to a status and uses the class name as the error code. `NotFoundException` (404) means that a lookup found no
   stored object, for example no user with the id in the path. `DuplicationException` (409) means that a request repeats
-  a value that must be unique, such as the login name or the email address of another user. `ValidationException` (400)
-  means that a request breaks a rule of the domain or of a controller, such as an integer delta other than +1, an
-  expense amount that is not greater than 0.00 €, or an id in the body of `POST /api/users`. A request body that fails Bean Validation or cannot be read, such as a body with a
-  delta of 1.9, gets a 400 with the error code `BadRequest` instead.
+  a value that must be unique, such as the login name or the email address of another user. `ConflictException` (409)
+  means that a well-formed request does not apply to the current state, such as an undo after the grace period.
+  `ForbiddenException` (403) means that the acting user may not perform the action, such as creating a user without the
+  role `ADMIN`. `ValidationException` (400) means that a request breaks a rule of the domain or of a controller, such as
+  an integer delta other than +1, an expense amount that is not greater than 0.00 €, or an id in the body of
+  `POST /api/users`. A request body that fails Bean Validation or cannot be read, such as a body with a delta of 1.9,
+  gets a 400 with the error code `BadRequest` instead.
+- **firewall**: The `StrictHttpFirewall` of Spring Security, which rejects a request with `;`, `//`, `..`, or an encoded
+  slash in the path or with a control character in a header value. Security rules and Spring MVC can read such a
+  request differently. A rejected request gets 400 Bad Request with the message "The request could not be read."
+  Code: `SecurityConfig.requestRejectedHandler`, `RequestRejectedExceptionHandler`.

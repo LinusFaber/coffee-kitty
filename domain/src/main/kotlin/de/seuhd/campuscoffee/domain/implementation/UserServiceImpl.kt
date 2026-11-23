@@ -3,29 +3,58 @@ package de.seuhd.campuscoffee.domain.implementation
 import de.seuhd.campuscoffee.domain.exceptions.ValidationException
 import de.seuhd.campuscoffee.domain.model.Balance
 import de.seuhd.campuscoffee.domain.model.CoffeeConsumption
+import de.seuhd.campuscoffee.domain.model.Role
 import de.seuhd.campuscoffee.domain.model.User
 import de.seuhd.campuscoffee.domain.ports.api.UserService
 import de.seuhd.campuscoffee.domain.ports.data.BalanceDataService
 import de.seuhd.campuscoffee.domain.ports.data.CoffeeConsumptionDataService
 import de.seuhd.campuscoffee.domain.ports.data.UserDataService
+import de.seuhd.campuscoffee.domain.ports.internal.UserInternalService
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.util.UUID
 
 /**
- * Domain implementation of [UserService]. [create] checks every new user, including the fixture users, which do not
- * pass through a DTO or Bean Validation. [create] stores the user, the user's consumption, and the user's balance in
- * one transaction. If storing the consumption or the balance fails, the rollback removes the user too.
+ * Domain implementation of [UserService] and [UserInternalService]. [create] checks every new user, including the
+ * fixture users, which do not pass through a DTO or Bean Validation. [create] stores the user, the user's consumption,
+ * and the user's balance in one transaction. If storing the consumption or the balance fails, the rollback removes
+ * the user too.
  */
 @Service
 class UserServiceImpl(
     private val userDataService: UserDataService,
     private val coffeeConsumptionDataService: CoffeeConsumptionDataService,
     private val balanceDataService: BalanceDataService
-) : UserService {
+) : UserService,
+    UserInternalService {
     override fun getAll(): List<User> = userDataService.getAll()
 
     override fun getById(id: UUID): User = userDataService.getById(id)
+
+    override fun getByLoginName(loginName: String): User = userDataService.getByLoginName(loginName)
+
+    @Transactional
+    override fun create(
+        user: User,
+        actingUser: User
+    ): User {
+        requireAdmin(actingUser, "create a user")
+        return create(user)
+    }
+
+    @Transactional
+    override fun createInitialAdmin(admin: User): User? {
+        val users = userDataService.getAll()
+        if (users.any { it.role == Role.ADMIN }) {
+            return null
+        }
+        val existing = users.firstOrNull { it.loginName == admin.loginName }
+        return if (existing != null) {
+            userDataService.upsert(existing.copy(role = Role.ADMIN))
+        } else {
+            create(admin.copy(role = Role.ADMIN))
+        }
+    }
 
     @Transactional
     override fun create(user: User): User {

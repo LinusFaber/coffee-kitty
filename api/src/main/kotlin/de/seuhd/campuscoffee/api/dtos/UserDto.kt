@@ -1,5 +1,6 @@
 package de.seuhd.campuscoffee.api.dtos
 
+import de.seuhd.campuscoffee.domain.model.Role
 import de.seuhd.campuscoffee.domain.model.User
 import io.swagger.v3.oas.annotations.media.Schema
 import jakarta.validation.constraints.Email
@@ -20,6 +21,13 @@ import java.util.UUID
  *
  * In the error response, the message of a failed field constraint follows the field name, as in "loginName must have 1
  * to 255 characters".
+ *
+ * [role] is optional in a request. [UserDtoMapper] sets a missing role to `USER`.
+ *
+ * Jackson rejects a JSON number or boolean for a `String` property, such as a [loginName] of 12345, because
+ * `JsonConfig` turns off the conversion of such a value to its text. Jackson also rejects a JSON number for [role],
+ * such as 1, because `application.yaml` sets `spring.jackson.datatype.enum.fail-on-numbers-for-enums` to true. These
+ * rejections return a 400 with the error code `BadRequest`.
  */
 data class UserDto(
     @field:Schema(accessMode = Schema.AccessMode.READ_ONLY)
@@ -50,5 +58,7 @@ data class UserDto(
     val firstName: String?,
     @field:NotBlank
     @field:Size(max = User.MAX_NAME_LENGTH, message = "must have at most {max} characters")
-    val lastName: String?
+    val lastName: String?,
+    @field:Schema(description = "The role of the user. A request without a role creates a USER.")
+    val role: Role? = null
 ) : Dto<UUID>

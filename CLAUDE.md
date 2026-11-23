@@ -11,6 +11,7 @@ reads a coffee count, adds one coffee at a time, reads a balance, and records an
 because the app has no authentication. The app has no frontend. In the dev profile, Swagger UI documents the API.
 `GLOSSARY.md` defines one term for each concept. Use these terms in code, messages, and documentation.
 
+
 ## Architecture
 
 The project is a multi-module Gradle build with Kotlin build scripts and a hexagonal (ports-and-adapters) architecture.
@@ -30,7 +31,9 @@ when a build script declares a repository.
 - `data`: the JPA entities, the repositories, the entity mappers, the data adapters, and the Flyway migrations. Depends
   on `domain`.
 - `application`: the composition root, which wires the other modules into one Spring Boot application. It holds the
-  main class, the fixture loader with `FixturesProperties`, and `application.yaml`, but no web or business code.
+  main class, the startup tasks (`StartupDataInitializer`, which runs the fixture loader with `FixturesProperties`
+  and then `BootstrapAdminLoader` with `BootstrapAdminProperties`), `ClockConfiguration`, and `application.yaml`, but no
+  web or business code.
   Depends on `domain`, `api`, and `data`.
 
 ### Layer Rules (Enforced by ArchUnit)
@@ -59,7 +62,8 @@ The ports are in `domain/src/main/kotlin/de/seuhd/campuscoffee/domain/ports/`:
 - API ports (`ports/api/`), which the controllers call, such as `UserService`.
 - Data ports (`ports/data/`), which the data module implements, such as `UserDataService`. Each entity has a
   `*DataService` that extends the generic `CrudDataService<DOMAIN, ID>`.
-- Internal ports (`ports/internal/`), which the fixture loader and the test setup call, such as `DataResetService`.
+- Internal ports (`ports/internal/`), which the fixture loader, the bootstrap admin loader, and the test setup call,
+  such as `DataResetService` and `UserInternalService`.
 
 The implementations of the API and internal ports are in `domain/.../implementation/`. `UserServiceImpl.create` trims
 the email address, converts it to lowercase, and checks the new user against the limits in the companion object of
@@ -69,9 +73,13 @@ and the balance of the user at 0.00 €. The fixture loader and the test setup c
 `CoffeeConsumptionServiceImpl.applyDelta` accepts only a delta of `+1` and reads the consumption with
 `getByUserIdForUpdate`, which locks the row until the transaction ends. A second request that adds a coffee for the
 same user at the same time waits until the first transaction ends. The second request then reads the raised count, and
-both coffees count. `BalanceServiceImpl.recordExpense` works the same way: it locks the balance row, adds an amount
-greater than 0.00 € with at most two decimal places, and stores the raised balance. Without the lock, two concurrent
-expenses could both read the same balance and one expense would be lost.
+both coffees count. `applyDelta` also appends the time of the coffee to `coffeeTimes` and drops the times whose grace
+period has passed. The data module stores the list in the table `coffee_times`.
+`CoffeeConsumptionServiceImpl.undo` locks the consumption in the same way, lowers the count by one if
+`GracePeriod.isOpen` accepts the last of the `coffeeTimes`, and removes that time. Otherwise, it throws a
+`ConflictException`. After an undo, the coffee before can be undone while its own grace period is open. `applyDelta` and
+`GracePeriod` read the time from the `Clock` bean of `ClockConfiguration`. `ConsumptionProperties` binds the grace
+period, `campus-coffee.consumption.grace-period`, with a default of 5 minutes.
 
 ### Generic Base Classes
 
@@ -118,8 +126,12 @@ gradle :application:bootRun --args='--spring.profiles.active=dev'
 ```
 
 Scope a `--tests` filter to one subproject, because Gradle fails the test task of every subproject without a matching
-test. Quote the filter, because the backtick names of test methods contain spaces. In `:application:test`, a filter that
-starts with `*` also runs the Cucumber scenarios, which need Docker. Without Docker, run the rest of the build with
+test. Quote the filter, because the backtick names of test methods contain spaces. In `:application:test`, start the
+filter with a class name or a package, as in `--tests "ArchitectureTests"` or
+`--tests "de.seuhd.campuscoffee.tests.system*"`, and never with `*`. With `--tests "*ArchitectureTests"`, the matching
+tests run, but the task fails with `CucumberTests > initializationError`: Gradle then also passes the suite class
+`CucumberTests` to JUnit, the filter removes all its scenarios, and JUnit fails a suite without tests
+(`NoTestsDiscoveredException`). Without Docker, run the rest of the build with
 `gradle build -x :application:test -x :data:test`.
 
 The root `gradle.properties` turns on the Gradle configuration cache. A task action must not reference a top-level value
@@ -167,10 +179,11 @@ changed decision in a new ADR that refers to the old one, and set the status of 
 
 ## Versioning and Releases
 
-The project follows [Semantic Versioning](https://semver.org/) and keeps a
-[Keep a Changelog](https://keepachangelog.com/)-style `CHANGELOG.md`. For every notable change, add a bullet to its
-group under `## [Unreleased]`, such as `Added`, `Changed`, or `Fixed`. A release raises the patch version for bug
-fixes, tooling, and internal cleanups, the minor version for features, and the major version for breaking changes. The
+The project follows [Semantic Versioning](https://semver.org/) and keeps a [Keep a
+Changelog](https://keepachangelog.com/)-style `CHANGELOG.md`. For every notable change, add a bullet to its group under
+`## [Unreleased]`, such as `Added`, `Changed`, or `Fixed`. A release raises the patch version for bug fixes, tooling,
+and internal cleanups, the minor version for features, and the major version for breaking changes. As long as the major
+version is 0, a breaking change raises the minor version, which Semantic Versioning allows for initial development. The
 `version` in the root `gradle.properties` must equal the version in the most recent `## [x.y.z]` header of
 `CHANGELOG.md`, and `scripts/check-version-sync.sh` fails in CI when the two versions differ. To release a version:
 
@@ -222,14 +235,25 @@ constraints, such as a null in a NOT NULL column, passes the startup check and f
   `ConstraintMappingRegistryIntegrationTest` fails unless `ConstraintMapping.REGISTRY` lists exactly the unique
   constraints and unique indexes of the schema.
 - System tests: the classes in `application/src/test/kotlin/de/seuhd/campuscoffee/tests/system/`, such as
-  `UserSystemTests` and `BalanceSystemTests`. They extend `AbstractSystemTest` and send requests with Spring's
-  `RestTestClient`. `SystemTestUtils` holds the PostgreSQL container from Testcontainers that the system and
+  `UserSystemTests` and `BalanceSystemTests`. They extend `AbstractSystemTest` and send their requests through
+  `UserRequests` and `ConsumptionRequests` in `application/src/test/kotlin/de/seuhd/campuscoffee/tests/`, which use
+  Spring's `RestTestClient`. A function for a system test returns a `Response` with the status code, the headers, and
+  the body or the error response. `SystemTestUtils` holds the PostgreSQL container from Testcontainers that the system and
   acceptance tests share.
 - Acceptance tests: Cucumber scenarios for behavior-driven development (BDD). The step definitions and the Cucumber
   configuration are in `application/src/test/kotlin/de/seuhd/campuscoffee/tests/acceptance/`, and the feature files,
   such as `consumption.feature` and `balance.feature`, are in
   `application/src/test/resources/de/seuhd/campuscoffee/tests/acceptance/`.
+  `CucumberSpringConfiguration` replaces the `Clock` bean with a `SettableClock`, which the steps set to the times in
+  the scenarios, such as 10:05:01. `ConsumptionRequests` sends the requests of a step by login name and returns the
+  status code or the values to check.
+
 - Architecture tests: `ArchitectureTests` (see Layer Rules).
+
+System tests and step definitions send every request through `UserRequests` and `ConsumptionRequests` and never build
+an HTTP request themselves, so that a reader of a test does not need to know the REST API. The exceptions are the tests
+in which the request itself is under test. `ErrorResponseSystemTests` builds the requests for an unknown path and for a
+path that the firewall rejects, and `OpenApiSystemTests` builds the request for the OpenAPI definition.
 
 ### Test Naming
 
@@ -268,13 +292,30 @@ profile, springdoc is off.
 
 ## Important Patterns
 
-- Error handling: The domain exceptions are `NotFoundException` (404) and `DuplicationException` (409), which the data
-  adapters throw (see Generic Base Classes), and `ValidationException` (400), which the domain services and
-  `UserController` throw. `GlobalExceptionHandler` extends `ResponseEntityExceptionHandler`, which maps Spring's
-  standard web exceptions to their status codes (e.g., 404 for an unknown path). Any other exception becomes a 500.
-  The body of every error response is an `ErrorResponse`. Its `errorCode` is the class name of the domain exception
-  or, for any other error, the reason phrase of the status without spaces (e.g., `BadRequest`). To add a domain
-  exception, make the changes that the KDoc of `GlobalExceptionHandler.handleMappedException` lists.
+- Acting user: Spring Security runs `ActingUserAuthenticationFilter` before the controllers. A controller that calls
+  `CurrentUserProvider.currentUser` needs a rule in `SecurityConfig.securityFilterChain` that requires authentication
+  for its method and path, such as `requestMatchers(HttpMethod.POST, "/api/users").authenticated()`. Without the rule, a
+  request without an acting user and with an invalid body gets 400 instead of 401, because Spring MVC validates the body
+  before the controller calls `CurrentUserProvider.currentUser`.
+- Firewall: Spring Security keeps its default firewall, which rejects, among others, a path with `;`, `//`, `..`, or an
+  encoded slash and a header value with a control character. `SecurityConfig.requestRejectedHandler` and
+  `RequestRejectedExceptionHandler` respond to such a request with 400 and an `ErrorResponse` (`writeErrorResponse` in
+  `api/.../security/`).
+- Error handling: The data adapters throw the domain exceptions `NotFoundException` (404) and `DuplicationException`
+  (409), as described in Generic Base Classes. `CoffeeConsumptionServiceImpl.undo` throws `ConflictException` (409),
+  `requireAdmin` throws `ForbiddenException` (403), and the domain services and `UserController` throw
+  `ValidationException` (400). `JsonAuthenticationEntryPoint` responds to a request without a known acting user with 401
+  and the header `WWW-Authenticate`, which RFC 9110 requires in every 401. `GlobalExceptionHandler` extends
+  `ResponseEntityExceptionHandler`, which maps Spring's standard web exceptions to their status codes (e.g., 404 for an
+  unknown path). Any other exception becomes a 500. The body of every error response is an `ErrorResponse`. Its
+  `errorCode` is the class name of the domain exception or, for any other error, the reason phrase of the status without
+  spaces (e.g., `BadRequest`). To add a domain exception, make the changes that the KDoc of
+  `GlobalExceptionHandler.handleMappedException` lists.
+- Request bodies: Jackson rejects a value of the wrong JSON type instead of converting it, and the request gets a 400
+  with the error code `BadRequest`. The `spring.jackson` settings in `application.yaml` reject a number with a fraction
+  for an integer field, a JSON string for a number or a boolean field, and a JSON number for an enum field. `JsonConfig`
+  in `api/.../configuration/` rejects a JSON number or boolean for a `String` field, because Spring Boot has no
+  property for this setting. A new DTO gets these checks without any code.
 - MapStruct: The `kotlin-kapt-conventions` plugin runs MapStruct through kapt with the option
   `mapstruct.unmappedTargetPolicy=ERROR`. With this option, the build fails when a target property has neither a
   source nor `ignore = true`.
@@ -286,8 +327,10 @@ profile, springdoc is off.
   `@PreUpdate` and truncates them to microseconds, because a PostgreSQL `timestamp` column stores microseconds. A
   timestamp that `upsert` returns then equals the timestamp that a later query reads.
 - Time: Every timestamp in the database, the code, and the API is in UTC, and the API serves timestamps without an
-  offset. Read the clock only with `LocalDateTime.now(ZoneOffset.UTC)`, never in the system time zone. A client
-  converts a timestamp to a local time zone only for display.
+  offset. A domain service that compares times reads the current time from the injected `Clock`, so that a test can
+  fix the time (see `CoffeeConsumptionServiceTest`). Other code reads the current time with
+  `LocalDateTime.now(ZoneOffset.UTC)`, never in the system time zone. A client converts a timestamp to a local time
+  zone only for display.
 
 ## Adding a New Entity
 

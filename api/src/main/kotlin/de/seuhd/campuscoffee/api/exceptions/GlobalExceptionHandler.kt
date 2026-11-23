@@ -1,6 +1,8 @@
 package de.seuhd.campuscoffee.api.exceptions
 
+import de.seuhd.campuscoffee.domain.exceptions.ConflictException
 import de.seuhd.campuscoffee.domain.exceptions.DuplicationException
+import de.seuhd.campuscoffee.domain.exceptions.ForbiddenException
 import de.seuhd.campuscoffee.domain.exceptions.NotFoundException
 import de.seuhd.campuscoffee.domain.exceptions.ValidationException
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -50,7 +52,13 @@ class GlobalExceptionHandler : ResponseEntityExceptionHandler() {
      * @param exception the domain exception
      * @param request   the current web request
      */
-    @ExceptionHandler(NotFoundException::class, DuplicationException::class, ValidationException::class)
+    @ExceptionHandler(
+        NotFoundException::class,
+        DuplicationException::class,
+        ConflictException::class,
+        ForbiddenException::class,
+        ValidationException::class
+    )
     fun handleMappedException(
         exception: Exception,
         request: WebRequest
@@ -73,6 +81,11 @@ class GlobalExceptionHandler : ResponseEntityExceptionHandler() {
      * `require`. Every such response has the fixed message "An unexpected error occurred." The log line at ERROR
      * contains the method and path of the request and the exception with its stack trace.
      *
+     * One `IllegalArgumentException` is an error of the client: Spring throws it while it reads a request with a
+     * wildcard in the `Content-Type` header (an asterisk as the type or as the subtype), before it asks a message
+     * converter. Such a request gets a 415 with the error code `UnsupportedMediaType`, like every other media type
+     * that the API does not read, and the handler logs it at INFO.
+     *
      * @param exception the unexpected exception
      * @param request   the current web request
      */
@@ -81,6 +94,11 @@ class GlobalExceptionHandler : ResponseEntityExceptionHandler() {
         exception: Exception,
         request: WebRequest
     ): ResponseEntity<ErrorResponse> {
+        if (exception is IllegalArgumentException && request.hasWildcardContentType()) {
+            val status = HttpStatus.UNSUPPORTED_MEDIA_TYPE
+            log.info { "Wildcard Content-Type -> $status on ${describe(request)}" }
+            return respond(status, errorBody(status, request, status.reasonPhrase))
+        }
         log.error(exception) { "Unexpected error on ${describe(request)}" }
         return respond(
             HttpStatus.INTERNAL_SERVER_ERROR,
@@ -192,6 +210,8 @@ class GlobalExceptionHandler : ResponseEntityExceptionHandler() {
         when (exception) {
             is NotFoundException -> ExceptionConfig(HttpStatus.NOT_FOUND, "Resource not found")
             is DuplicationException -> ExceptionConfig(HttpStatus.CONFLICT, "Duplicate resource")
+            is ConflictException -> ExceptionConfig(HttpStatus.CONFLICT, "Conflict with the current state")
+            is ForbiddenException -> ExceptionConfig(HttpStatus.FORBIDDEN, "Action not allowed")
             is ValidationException -> ExceptionConfig(HttpStatus.BAD_REQUEST, "Domain validation failed")
             else -> null
         }
@@ -233,3 +253,13 @@ class GlobalExceptionHandler : ResponseEntityExceptionHandler() {
         private const val MAX_LOGGED_LENGTH = 500
     }
 }
+
+/**
+ * Returns whether the `Content-Type` header of the request has an asterisk as its type or as its subtype, also before
+ * a suffix such as `+json`. A header that is absent or is not a media type is not a wildcard.
+ */
+private fun WebRequest.hasWildcardContentType(): Boolean =
+    getHeader(HttpHeaders.CONTENT_TYPE)
+        ?.let { header -> runCatching { MediaType.parseMediaType(header) }.getOrNull() }
+        ?.let { mediaType -> mediaType.isWildcardType || mediaType.isWildcardSubtype }
+        ?: false
