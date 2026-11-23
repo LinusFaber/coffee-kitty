@@ -16,7 +16,7 @@ index f859b0c..957ad33 100644
  import tools.jackson.databind.ObjectMapper
 +import java.time.LocalTime
  import java.util.UUID
- 
+
  /**
 @@ -24,16 +26,24 @@ import java.util.UUID
   * and creates the fixture users of `TestFixtures`, such as `maxmustermann`, each with a coffee count of 0. A login name
@@ -39,7 +39,7 @@ index f859b0c..957ad33 100644
  ) {
      private lateinit var userId: UUID
      private lateinit var lastResult: EntityExchangeResult<ByteArray>
- 
+
 +    /** Converts a time such as 10:05:00 in a step into a [LocalTime] for the parameter type `{time}`. */
 +    @ParameterType("\\d{2}:\\d{2}:\\d{2}")
 +    fun time(value: String): LocalTime = LocalTime.parse(value)
@@ -50,7 +50,7 @@ index f859b0c..957ad33 100644
 @@ -57,11 +67,36 @@ class CucumberConsumptionSteps(
          theCoffeeCountIs(count)
      }
- 
+
 +    @Given("the user {string} has {int} coffees, the last one added at {time}")
 +    fun theUserHasCoffeesTheLastOneAddedAt(
 +        loginName: String,
@@ -69,7 +69,7 @@ index f859b0c..957ad33 100644
      fun theUserAddsACoffee() {
          lastResult = postCoffee().returnResult<ByteArray>()
      }
- 
+
 +    @When("the user undoes the coffee at {time}")
 +    fun theUserUndoesTheCoffeeAt(time: LocalTime) {
 +        clock.setTime(time)
@@ -87,7 +87,7 @@ index f859b0c..957ad33 100644
 @@ -69,6 +104,11 @@ class CucumberConsumptionSteps(
          assertThat(dto.count).isEqualTo(count)
      }
- 
+
 +    @Then("the response status is {int}")
 +    fun theResponseStatusIs(status: Int) {
 +        assertThat(lastResult.status.value()).isEqualTo(status)
@@ -110,7 +110,7 @@ index 42e657e..29d4ba8 100644
 +import org.springframework.context.annotation.Primary
  import org.springframework.test.context.DynamicPropertyRegistry
  import org.springframework.test.context.DynamicPropertySource
- 
+
 @@ -17,7 +20,8 @@ import org.springframework.test.context.DynamicPropertySource
   * The Spring context and the hooks for every acceptance scenario. Cucumber accepts only one class with
   * [CucumberContextConfiguration], and the step classes therefore contain only step definitions. The Spring context
@@ -124,7 +124,7 @@ index 42e657e..29d4ba8 100644
 @@ -40,6 +44,18 @@ class CucumberSpringConfiguration(
          dataResetService.clearAll()
      }
- 
+
 +    /**
 +     * Adds the [SettableClock] to the Spring context of the scenarios. `@SpringBootTest` uses a nested
 +     * `@TestConfiguration` in addition to the configuration of the application. `@Primary` selects the settable clock
