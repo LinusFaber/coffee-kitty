@@ -5,8 +5,8 @@ import de.seuhd.campuscoffee.api.dtos.ExpenseDto
 import de.seuhd.campuscoffee.api.exceptions.ErrorResponse
 import de.seuhd.campuscoffee.domain.model.persistedId
 import de.seuhd.campuscoffee.tests.SystemTestUtils.client
-import de.seuhd.campuscoffee.tests.SystemTestUtils.requireStatus
 import de.seuhd.campuscoffee.tests.SystemTestUtils.statusCode
+import de.seuhd.campuscoffee.tests.toResponse
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.springframework.http.MediaType
@@ -67,8 +67,8 @@ class BalanceSystemTests : AbstractSystemTest() {
 
     @Test
     fun `recording two expenses adds both amounts to the balance`() {
-        postExpense(ExpenseDto(BigDecimal("2.50"))).requireStatus(200)
-        postExpense(ExpenseDto(BigDecimal("10.00"))).requireStatus(200)
+        postExpense(ExpenseDto(BigDecimal("2.50"))).toResponse<BalanceDto>().requireStatus(200)
+        postExpense(ExpenseDto(BigDecimal("10.00"))).toResponse<BalanceDto>().requireStatus(200)
 
         assertThat(balance().balance).isEqualByComparingTo("12.50")
     }
